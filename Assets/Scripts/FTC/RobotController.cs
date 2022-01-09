@@ -30,6 +30,22 @@ public class RobotController : MonoBehaviour
 
     public bool usingJoystick = true;
 
+    public int sendPort = 9051;
+    public int recPort = 9050;
+
+    private int RXrecv;
+    private Socket RXnewsock;
+    private byte[] RXdata;
+    private EndPoint RXRemote;
+
+    private int TXrecv;
+    private Socket TXnewsock;
+    private byte[] TXdata;
+    private EndPoint TXRemote;
+
+    private bool canSendEncoder = false;
+    private bool reconnectEncoderSocket = true;
+
     private float frontLeftWheelCmd = 0f;
     private float frontRightWheelCmd = 0f;
     private float backLeftWheelCmd = 0f;
@@ -160,6 +176,99 @@ public class RobotController : MonoBehaviour
     private void OnDisable()
     {
         controls.GamePlay.Disable();
+    }
+
+    void sendToRC()
+    {
+        TXdata = new byte[1024];
+        IPEndPoint ipep = new IPEndPoint(IPAddress.Any, sendPort);
+        TXnewsock = new Socket(AddressFamily.InterNetwork,
+                    SocketType.Dgram, ProtocolType.Udp);
+        TXnewsock.Bind(ipep);
+        while (true)
+        {
+            try
+            {
+                if (reconnectEncoderSocket)
+                {
+                    IPEndPoint sender = new IPEndPoint(IPAddress.Any, 0);
+                    TXRemote = (EndPoint)(sender);
+
+                    TXrecv = TXnewsock.ReceiveFrom(TXdata, ref TXRemote);
+                    string welcome = "Welcome to my test server";
+                    TXdata = Encoding.ASCII.GetBytes(welcome);
+                    TXnewsock.SendTo(TXdata, TXdata.Length, SocketFlags.None, TXRemote);
+
+                    reconnectEncoderSocket = false;
+                }
+                if (canSendEncoder)
+                {
+                    RobotPowers robotencoders = new RobotPowers();
+                    robotencoders.motor1 = frontLeftWheelEnc;
+                    robotencoders.motor2 = frontRightWheelEnc;
+                    robotencoders.motor3 = backLeftWheelEnc;
+                    robotencoders.motor4 = backRightWheelEnc;
+
+                    //Convert to JSON
+                    string encodersJSON = JsonUtility.ToJson(robotencoders);
+
+                    TXdata = Encoding.ASCII.GetBytes(encodersJSON);
+                    TXnewsock.SendTo(TXdata, TXdata.Length, SocketFlags.None, TXRemote);
+                    canSendEncoder = false;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError(e.ToString());
+            }
+        }
+    }
+
+    void receiveFromRC()
+    {
+        RXdata = new byte[1024];
+        IPEndPoint ipep = new IPEndPoint(IPAddress.Any, recPort);
+
+        RXnewsock = new Socket(AddressFamily.InterNetwork,
+                      SocketType.Dgram, ProtocolType.Udp);
+
+        print("Waiting for a udp client... On port " + recPort);
+        RXnewsock.Bind(ipep);
+
+        IPEndPoint sender = new IPEndPoint(IPAddress.Any, 0);
+        RXRemote = (EndPoint)(sender);
+
+        while (true)
+        {
+            RXdata = new byte[1024];
+            RXrecv = RXnewsock.ReceiveFrom(RXdata, ref RXRemote);
+            string message = Encoding.ASCII.GetString(RXdata, 0, RXrecv);
+            print(message);
+            if (message.Contains("reset"))
+            {
+                reconnectEncoderSocket = true;
+                frontLeftWheelCmd = 0f;
+                frontRightWheelCmd = 0f;
+                backLeftWheelCmd = 0f;
+                backRightWheelCmd = 0f;
+                frontLeftWheelEnc = 0f;
+                frontRightWheelEnc = 0f;
+                backLeftWheelEnc = 0f;
+                backRightWheelEnc = 0f;
+            }
+            else
+            {
+                RobotPowers powers = RobotPowers.CreateFromJSON(message);
+                frontLeftWheelCmd = powers.motor1;
+                frontRightWheelCmd = powers.motor2;
+                backLeftWheelCmd = powers.motor3;
+                backRightWheelCmd = powers.motor4;
+                motorPower5 = powers.motor5;
+                motorPower6 = powers.motor6;
+                motorPower7 = powers.motor7;
+                motorPower8 = powers.motor8;
+            }
+        }
     }
 
     private void Start()
